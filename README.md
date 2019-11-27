@@ -32,3 +32,7 @@ Un estimateur $\tilde{X}$ de $X$ sera obtenu par:
 $$
 \tilde{X} = \underset{X}{\mathrm{argmin}} ~~ \alpha L_c(C, X) + \beta L_s(S, X)
 $$
+
+## Architecture utilisée
+
+On utilise pour l'extraction des caractéristiques globales et locales des images choisies un réseau convolutif profond pré-entraîné sur un problème de reconnaissance d'image général, [VGG19](https://arxiv.org/abs/1409.1556).
