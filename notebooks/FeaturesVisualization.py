@@ -6,6 +6,8 @@
 # In[1]:
 
 
+from typing import List, Tuple
+
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -81,34 +83,44 @@ print(f"Style shape : {style_img.shape}")
 # In[8]:
 
 
-content_img = keras.applications.vgg19.preprocess_input(content_img)
-style_img = keras.applications.vgg19.preprocess_input(style_img)
+content_img = keras.applications.vgg19.preprocess_input(content_img, mode="tf")
+style_img = keras.applications.vgg19.preprocess_input(style_img, mode="tf")
 
 
-# In[46]:
+# In[9]:
 
 
-plt.imshow(np.squeeze(style_img))
+fig = plt.figure(figsize=(15, 10))
 
-style_img.max()
+axes = fig.add_subplot(1, 2, 1)
+axes.imshow(np.squeeze(style_img))
+axes.set_title("Style image")
 
+axes = fig.add_subplot(1, 2, 2)
+axes.imshow(np.squeeze(content_img))
+axes.set_title("Content image")
+
+plt.show(fig)
+
+
+# # Features visualization for content
 
 # ## Load model
 
-# In[9]:
+# In[10]:
 
 
 vgg = VGG19(include_top=False,  weights='imagenet', input_shape=IMAGE_SHAPE)
 vgg.trainable = False
 
 
-# In[10]:
+# In[11]:
 
 
 vgg.summary()
 
 
-# In[11]:
+# In[12]:
 
 
 def get_vgg_layer(vgg, layer_name: str, model_name: str=None) -> keras.models.Model:
@@ -116,15 +128,19 @@ def get_vgg_layer(vgg, layer_name: str, model_name: str=None) -> keras.models.Mo
     return keras.models.Model(vgg.input, output, name=model_name)
 
 
-# In[19]:
+# In[13]:
 
 
 block1 = get_vgg_layer(vgg, "block1_conv1", "block1")
 block2 = get_vgg_layer(vgg, "block2_conv1", "block2")
-block3 = get_vgg_layer(vgg, "block3_conv4", "block3")
+block3 = get_vgg_layer(vgg, "block3_conv1", "block3")
+block4 = get_vgg_layer(vgg, "block4_conv1", "block4")
+block5 = get_vgg_layer(vgg, "block5_conv1", "block5")
+
+blocks = [block1, block2, block3, block4, block5]
 
 
-# In[20]:
+# In[14]:
 
 
 block1.summary()
@@ -134,109 +150,116 @@ block1.summary()
 # 
 # We want the latent space representation of the input noise to fit the latent space representation of the input image.
 
-# In[21]:
+# ### Loss
+# Let $c_m$ be the features extracted by the model $M$ from the content image $C$, and $x_m$ the features extracted by that same layer of the input noise $X$ :
+# 
+# $L(x_m, c_m) = \frac{1}{2} \sum_i {(x_{m, i} - c_{m, i)}2$
+
+# Let $\tilde{X}$ be the reconstructed image based on the features exctracted by $M$ :
+# 
+# $\tilde{X} = \underset{X}{\mathrm{argmin}} ~~ L(M(X), M(C)) =  \underset{X}{\mathrm{argmin}} ~~ L(x_m, c_m)$
+
+# In[15]:
 
 
 def get_features_loss(noise_features, features_target):
     return tf.reduce_mean(tf.square(noise_features - features_target))
 
 
-# In[22]:
+# In[16]:
 
 
 def compute_loss(model, init_noise, features):
     model_outputs = model(init_noise)
-    return get_features_loss(model_outputs, features)
+    return get_features_loss(model_outputs, features) 
 
 
-# In[23]:
+# In[17]:
 
 
 def compute_grads(model, init_noise, features):
     with tf.GradientTape() as tape: 
-        tape.watch(init_noise)
+        tape.watch(init_noise) # TOUJOURS REGARDER CE QUI VIENT D'AILLEURS 
         loss = compute_loss(model, init_noise, features)
-    return tape.gradient(loss, init_noise), loss
+    return tape.gradient(loss, init_noise), loss # dL(c, x)/dx
+
+
+# ## Training function
+
+# In[33]:
+
+
+def train_content_features(block: tf.keras.models.Model, img: np.ndarray, iterations=500, opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
+
+    with tf.device("GPU:0"):
+        features = block(img)
+        init_noise = tf.Variable(tf.random.normal([1, *IMAGE_SHAPE])) #WARNING: toujours mettre les trucs utilisés par le
+                                                                      #GradientTape en tf.Variable ("mutable tensor") sinon c'est 
+                                                                      #la hez
+        min_vals = -1
+        max_vals = 1
+
+        history = []
+        built_imgs = []
+        best_loss = float("inf")
+
+
+        for i in tqdm(range(iterations), f"Building img for {block.name}"):
+            grads, loss = compute_grads(block, init_noise, features)
+            opt.apply_gradients([(grads, init_noise)])
+            clipped = tf.clip_by_value(init_noise, min_vals, max_vals)
+            init_noise.assign(clipped) 
+
+            history.append(loss.numpy())
+
+            if loss < best_loss:
+                best_loss = loss
+                built_imgs.append(np.squeeze(init_noise.numpy().copy()))
+                
+    return history, built_imgs
 
 
 # ## Train on noise image
+
+# In[34]:
+
+
+results = {}
+for block in blocks:
+    results[block.name] = train_content_features(block, content_img)
+
+
+# Deprocessing based on :
 # 
-# For VGG block 1.
+# https://github.com/keras-team/keras-applications/blob/master/keras_applications/imagenet_utils.py
 
-# In[31]:
-
-
-iterations = 100
-opt = tf.keras.optimizers.SGD(5)
-
-init_noise = tf.Variable(tf.random.normal([1, *IMAGE_SHAPE])) #WARNING: toujours mettre les trucs utilisés par le
-                                                              #GradientTape en tf.Variable ("mutable tensor") sinon c'est 
-                                                              #la hez
-features = block1(style_img)
-
-
-# In[32]:
-
-
-norm_means = np.array([103.939, 116.779, 123.68])
-min_vals = -norm_means
-max_vals = 255 - norm_means 
-
-history = []
-best_loss = float("inf")
-best_img = np.squeeze(init_noise.numpy().copy())
-
-for i in tqdm(range(iterations)):
-    grads, loss = compute_grads(block1, init_noise, features)
-    opt.apply_gradients([(grads, init_noise)])
-    clipped = tf.clip_by_value(init_noise, min_vals, max_vals)
-    init_noise.assign(clipped) 
-    
-    history.append(loss)
-    
-    if loss < best_loss:
-        best_loss = loss
-        best_img = np.squeeze(init_noise.numpy().copy())
-        
-    if i % 10 == 0:
-        Image.from_array()
-        
-plt.imshow(best_img)
-
-
-# In[49]:
+# In[35]:
 
 
 def deprocess_image(x):
-    if tf.image_data_format() == 'channels_first':
-        x = x.reshape((3, img_nrows, img_ncols))
-        x = x.transpose((1, 2, 0))
-    else:
-        x = x.reshape((img_nrows, img_ncols, 3))
-    # Remove zero-center by mean pixel
-    x[:, :, 0] += 103.939
-    x[:, :, 1] += 116.779
-    x[:, :, 2] += 123.68
-    # 'BGR'->'RGB'
-    x = x[:, :, ::-1]
-    x = np.clip(x, 0, 255).astype('uint8')
-    return x
+    y = x.copy()
+    y += 1.
+    y *= 127.5
+    return y.astype("uint8")
 
 
-# In[50]:
+# In[36]:
 
 
-img = deprocess_img(best_img)
+fig = plt.figure(figsize=(30,10))
+fig.suptitle("Image ")
+for i, block in enumerate(blocks):
+    axes = fig.add_subplot(2, len(blocks), i+1)
+    axes.imshow(deprocess_image(results[block.name][1][-1]))
+    axes.set_title(block.name)
+    
+    axes2 = fig.add_subplot(2, len(blocks), i+len(blocks)+1)
+    axes2.plot(results[block.name][0])
+    axes2.set_title("Loss over iterations")
 
 
-# In[51]:
+# In[38]:
 
 
-plt.imshow(img)
-
-
-# In[ ]:
-
-
-
+fig.savefig("../reports/content-features-visualization.png")
 
