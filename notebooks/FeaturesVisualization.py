@@ -6,6 +6,7 @@
 # In[1]:
 
 
+import re
 from typing import List, Tuple
 
 import numpy as np
@@ -110,25 +111,50 @@ plt.show(fig)
 # In[10]:
 
 
-vgg = VGG19(include_top=False,  weights='imagenet', input_shape=IMAGE_SHAPE)
-vgg.trainable = False
+vgg_max = VGG19(include_top=False,  weights='imagenet', input_shape=IMAGE_SHAPE)
+vgg_max.trainable = False
 
 
 # In[11]:
 
 
-vgg.summary()
+def replace_max_by_average_pooling(model):
+
+    input_layer, *other_layers = model.layers
+    assert isinstance(input_layer, keras.layers.InputLayer)
+
+    x = input_layer.output
+    for layer in other_layers:
+        if isinstance(layer, keras.layers.MaxPooling2D):
+            layer = keras.layers.AveragePooling2D(
+                pool_size=layer.pool_size,
+                strides=layer.strides,
+                padding=layer.padding,
+                data_format=layer.data_format,
+                name=f"{layer.name}_av",
+            )
+        x = layer(x)
+
+    return keras.models.Model(inputs=input_layer.input, outputs=x)
 
 
 # In[12]:
 
 
-def get_vgg_layer(vgg, layer_name: str, model_name: str=None) -> keras.models.Model:
-    output = vgg.get_layer(layer_name).output
-    return keras.models.Model(vgg.input, output, name=model_name)
+vgg = replace_max_by_average_pooling(vgg_max)
+vgg.summary()
 
 
 # In[13]:
+
+
+def get_vgg_layer(model, layer_name: str, model_name: str=None) -> keras.models.Model:
+    layer = model.get_layer(layer_name)
+    output = layer.get_output_at(1)
+    return keras.models.Model(model.layers[0].input, output, name=model_name)
+
+
+# In[14]:
 
 
 block1 = get_vgg_layer(vgg, "block1_conv1", "block1")
@@ -140,7 +166,7 @@ block5 = get_vgg_layer(vgg, "block5_conv1", "block5")
 blocks = [block1, block2, block3, block4, block5]
 
 
-# In[14]:
+# In[15]:
 
 
 block3.summary()
@@ -159,34 +185,34 @@ block3.summary()
 # 
 # $\tilde{X} = \underset{X}{\mathrm{argmin}} ~~ L(M(X), M(C)) =  \underset{X}{\mathrm{argmin}} ~~ L(x_m, c_m)$
 
-# In[15]:
+# In[16]:
 
 
 def get_features_loss(noise_features, features_target):
     return tf.reduce_mean(tf.square(noise_features - features_target))
 
 
-# In[16]:
+# In[17]:
 
 
-def compute_loss(model, init_noise, features):
+def compute_content_loss(model, init_noise, features):
     model_outputs = model(init_noise)
     return get_features_loss(model_outputs, features) 
 
 
-# In[17]:
+# In[18]:
 
 
 def compute_content_grads(model, init_noise, features):
     with tf.GradientTape() as tape: 
         tape.watch(init_noise) # TOUJOURS REGARDER CE QUI VIENT D'AILLEURS 
-        loss = compute_loss(model, init_noise, features)
+        loss = compute_content_loss(model, init_noise, features)
     return tape.gradient(loss, init_noise), loss # dL(c, x)/dx
 
 
 # ## Training function
 
-# In[18]:
+# In[19]:
 
 
 def train_content_features(block: tf.keras.models.Model, img: np.ndarray, iterations=500, opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
@@ -221,7 +247,7 @@ def train_content_features(block: tf.keras.models.Model, img: np.ndarray, iterat
 
 # ## Train on noise image
 
-# In[ ]:
+# In[20]:
 
 
 results = {}
@@ -233,7 +259,7 @@ for block in blocks:
 # 
 # https://github.com/keras-team/keras-applications/blob/master/keras_applications/imagenet_utils.py
 
-# In[ ]:
+# In[21]:
 
 
 def deprocess_image(x):
@@ -243,7 +269,7 @@ def deprocess_image(x):
     return y.astype("uint8")
 
 
-# In[ ]:
+# In[22]:
 
 
 fig = plt.figure(figsize=(30,10))
@@ -258,10 +284,41 @@ for i, block in enumerate(blocks):
     axes2.set_title("Loss over iterations")
 
 
-# In[ ]:
+# In[23]:
 
 
 fig.savefig("../reports/content-features-visualization.png")
+
+
+# ## Inversion
+
+# In[33]:
+
+
+results = {}
+for block in blocks:
+    results[block.name] = train_content_features(block, style_img)
+
+
+# In[34]:
+
+
+fig = plt.figure(figsize=(30,10))
+fig.suptitle("Content reconstruction")
+for i, block in enumerate(blocks):
+    axes = fig.add_subplot(2, len(blocks), i+1)
+    axes.imshow(deprocess_image(results[block.name][1][-1]))
+    axes.set_title(block.name)
+    
+    axes2 = fig.add_subplot(2, len(blocks), i+len(blocks)+1)
+    axes2.plot(results[block.name][0])
+    axes2.set_title("Loss over iterations")
+
+
+# In[35]:
+
+
+fig.savefig("../reports/content-features-visualization-forstyle.png")
 
 
 # # Feature visualization for style
@@ -271,7 +328,7 @@ fig.savefig("../reports/content-features-visualization.png")
 # We take as latent space for the style the local correlations existing in the features representations of a VGG layer.
 # These correlations are extracted by computing the Gram matrices $G^l$ 
 
-# In[ ]:
+# In[24]:
 
 
 style_blocks = {
@@ -283,7 +340,7 @@ style_blocks = {
 }
 
 
-# In[ ]:
+# In[25]:
 
 
 def gram_matrix(tensor):
@@ -293,7 +350,7 @@ def gram_matrix(tensor):
     return gram / tf.cast(filters, tf.float32)
 
 
-# In[ ]:
+# In[26]:
 
 
 def get_style_loss(noise_features, target_features):
@@ -302,10 +359,10 @@ def get_style_loss(noise_features, target_features):
     return tf.reduce_sum(tf.square(noise_gram - target_gram)) / tf.cast(4, tf.float32)
 
 
-# In[ ]:
+# In[27]:
 
 
-def compute_loss(models, init_noise, features_list):
+def compute_style_loss(models, init_noise, features_list):
     loss = 0.0
     for features, model in zip(features_list, models):
         model_outputs = model(init_noise)
@@ -313,17 +370,17 @@ def compute_loss(models, init_noise, features_list):
     return loss / len(models)
 
 
-# In[ ]:
+# In[28]:
 
 
 def compute_style_grads(models, init_noise, features_list):
     with tf.GradientTape() as tape: 
         tape.watch(init_noise) # TOUJOURS REGARDER CE QUI VIENT D'AILLEURS
-        loss = compute_loss(models, init_noise, features_list)
+        loss = compute_style_loss(models, init_noise, features_list)
     return tape.gradient(loss, init_noise), loss # dL(c, x)/dx
 
 
-# In[ ]:
+# In[29]:
 
 
 def train_style_features(blocks: tf.keras.models.Model, img: np.ndarray, iterations=500, opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
@@ -358,7 +415,40 @@ def train_style_features(blocks: tf.keras.models.Model, img: np.ndarray, iterati
     return history, built_imgs
 
 
-# In[ ]:
+# In[30]:
+
+
+results = {}
+for name, block in style_blocks.items():
+    results[name] = train_style_features(block, style_img)
+
+
+# In[31]:
+
+
+fig = plt.figure(figsize=(30,10))
+fig.suptitle("Image ")
+i=1
+for name, block in style_blocks.items():
+    axes = fig.add_subplot(2, len(style_blocks), i)
+    axes.imshow(deprocess_image(results[name][1][-1]))
+    axes.set_title(name)
+    
+    axes2 = fig.add_subplot(2, len(style_blocks), i+len(style_blocks))
+    axes2.plot(results[name][0])
+    axes2.set_title("Loss over iterations")
+    i+=1
+
+
+# In[32]:
+
+
+fig.savefig("../reports/style-features-visualization.png")
+
+
+# ## Inversion
+
+# In[36]:
 
 
 results = {}
@@ -366,17 +456,25 @@ for name, block in style_blocks.items():
     results[name] = train_style_features(block, content_img)
 
 
-# In[ ]:
+# In[37]:
 
 
 fig = plt.figure(figsize=(30,10))
 fig.suptitle("Image ")
-for i, block in enumerate(style_blocks):
-    axes = fig.add_subplot(2, len(blocks), i+1)
-    axes.imshow(deprocess_image(results[block.name][1][-1]))
-    axes.set_title(block.name)
+i=1
+for name, block in style_blocks.items():
+    axes = fig.add_subplot(2, len(style_blocks), i)
+    axes.imshow(deprocess_image(results[name][1][-1]))
+    axes.set_title(name)
     
-    axes2 = fig.add_subplot(2, len(blocks), i+len(blocks)+1)
-    axes2.plot(results[block.name][0])
+    axes2 = fig.add_subplot(2, len(style_blocks), i+len(style_blocks))
+    axes2.plot(results[name][0])
     axes2.set_title("Loss over iterations")
+    i+=1
+
+
+# In[38]:
+
+
+fig.savefig("../reports/style-features-visualization-forcontent.png")
 
