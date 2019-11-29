@@ -143,7 +143,7 @@ blocks = [block1, block2, block3, block4, block5]
 # In[14]:
 
 
-block1.summary()
+block3.summary()
 
 
 # ## Create loss and gradient function
@@ -177,7 +177,7 @@ def compute_loss(model, init_noise, features):
 # In[17]:
 
 
-def compute_grads(model, init_noise, features):
+def compute_content_grads(model, init_noise, features):
     with tf.GradientTape() as tape: 
         tape.watch(init_noise) # TOUJOURS REGARDER CE QUI VIENT D'AILLEURS 
         loss = compute_loss(model, init_noise, features)
@@ -186,7 +186,7 @@ def compute_grads(model, init_noise, features):
 
 # ## Training function
 
-# In[33]:
+# In[18]:
 
 
 def train_content_features(block: tf.keras.models.Model, img: np.ndarray, iterations=500, opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
@@ -205,7 +205,7 @@ def train_content_features(block: tf.keras.models.Model, img: np.ndarray, iterat
 
 
         for i in tqdm(range(iterations), f"Building img for {block.name}"):
-            grads, loss = compute_grads(block, init_noise, features)
+            grads, loss = compute_content_grads(block, init_noise, features)
             opt.apply_gradients([(grads, init_noise)])
             clipped = tf.clip_by_value(init_noise, min_vals, max_vals)
             init_noise.assign(clipped) 
@@ -221,7 +221,7 @@ def train_content_features(block: tf.keras.models.Model, img: np.ndarray, iterat
 
 # ## Train on noise image
 
-# In[34]:
+# In[ ]:
 
 
 results = {}
@@ -233,7 +233,7 @@ for block in blocks:
 # 
 # https://github.com/keras-team/keras-applications/blob/master/keras_applications/imagenet_utils.py
 
-# In[35]:
+# In[ ]:
 
 
 def deprocess_image(x):
@@ -243,11 +243,11 @@ def deprocess_image(x):
     return y.astype("uint8")
 
 
-# In[36]:
+# In[ ]:
 
 
 fig = plt.figure(figsize=(30,10))
-fig.suptitle("Image ")
+fig.suptitle("Content reconstruction")
 for i, block in enumerate(blocks):
     axes = fig.add_subplot(2, len(blocks), i+1)
     axes.imshow(deprocess_image(results[block.name][1][-1]))
@@ -258,8 +258,125 @@ for i, block in enumerate(blocks):
     axes2.set_title("Loss over iterations")
 
 
-# In[38]:
+# In[ ]:
 
 
 fig.savefig("../reports/content-features-visualization.png")
+
+
+# # Feature visualization for style
+
+# ## Loss and gradient functions
+# 
+# We take as latent space for the style the local correlations existing in the features representations of a VGG layer.
+# These correlations are extracted by computing the Gram matrices $G^l$ 
+
+# In[ ]:
+
+
+style_blocks = {
+    "blocks1": [block1],
+    "blocks2": [block1, block2],
+    "blocks3": [block1, block2, block3],
+    "blocks4": [block1, block2, block3, block4],
+    "blocks5": [block1, block2, block3, block4, block5]
+}
+
+
+# In[ ]:
+
+
+def gram_matrix(tensor):
+    tensor = tf.reshape(tensor, [-1, int(tensor.shape[-1])])
+    filters = int(tf.shape(tensor)[0])
+    gram = tf.matmul(tensor, tensor, transpose_a=True)
+    return gram / tf.cast(filters, tf.float32)
+
+
+# In[ ]:
+
+
+def get_style_loss(noise_features, target_features):
+    noise_gram = gram_matrix(noise_features)
+    target_gram = gram_matrix(target_features)
+    return tf.reduce_sum(tf.square(noise_gram - target_gram)) / tf.cast(4, tf.float32)
+
+
+# In[ ]:
+
+
+def compute_loss(models, init_noise, features_list):
+    loss = 0.0
+    for features, model in zip(features_list, models):
+        model_outputs = model(init_noise)
+        loss+=get_style_loss(model_outputs, features) 
+    return loss / len(models)
+
+
+# In[ ]:
+
+
+def compute_style_grads(models, init_noise, features_list):
+    with tf.GradientTape() as tape: 
+        tape.watch(init_noise) # TOUJOURS REGARDER CE QUI VIENT D'AILLEURS
+        loss = compute_loss(models, init_noise, features_list)
+    return tape.gradient(loss, init_noise), loss # dL(c, x)/dx
+
+
+# In[ ]:
+
+
+def train_style_features(blocks: tf.keras.models.Model, img: np.ndarray, iterations=500, opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
+
+    with tf.device("GPU:0"):
+        features_list = []
+        for block in blocks:
+            features_list.append(block(img))
+        
+        init_noise = tf.Variable(tf.random.normal([1, *IMAGE_SHAPE])) #WARNING: toujours mettre les trucs utilisés par le
+                                                                      #GradientTape en tf.Variable ("mutable tensor") sinon c'est 
+                                                                      #la hez
+        min_vals = -1
+        max_vals = 1
+
+        history = []
+        built_imgs = []
+        best_loss = float("inf")
+        
+        for i in tqdm(range(iterations), f"Building img for {block.name}"):
+            grads, loss = compute_style_grads(blocks, init_noise, features_list) # grads is None for some reason, let's go back up a bit      
+            opt.apply_gradients([(grads, init_noise)]) # pb is here, arrive dès la première iter: peut-être qu'il peut pas calculer de gradients lorsque y'a qu'une seule valeur ?
+                                                        # Nope, ça arriverait pour les autres calculs aussi           
+            clipped = tf.clip_by_value(init_noise, min_vals, max_vals)
+            init_noise.assign(clipped) 
+            history.append(loss.numpy())
+
+            if loss < best_loss:
+                best_loss = loss
+                built_imgs.append(np.squeeze(init_noise.numpy().copy()))
+                
+    return history, built_imgs
+
+
+# In[ ]:
+
+
+results = {}
+for name, block in style_blocks.items():
+    results[name] = train_style_features(block, content_img)
+
+
+# In[ ]:
+
+
+fig = plt.figure(figsize=(30,10))
+fig.suptitle("Image ")
+for i, block in enumerate(style_blocks):
+    axes = fig.add_subplot(2, len(blocks), i+1)
+    axes.imshow(deprocess_image(results[block.name][1][-1]))
+    axes.set_title(block.name)
+    
+    axes2 = fig.add_subplot(2, len(blocks), i+len(blocks)+1)
+    axes2.plot(results[block.name][0])
+    axes2.set_title("Loss over iterations")
 
