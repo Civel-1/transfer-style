@@ -4,5 +4,11 @@
 # In[ ]:
 
 
+get_ipython().system('pip install src')
+
+
+# In[ ]:
+
+
 
 
