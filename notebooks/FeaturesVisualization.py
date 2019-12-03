@@ -6,7 +6,6 @@
 # In[1]:
 
 
-import re
 from typing import List, Tuple
 
 import numpy as np
@@ -115,7 +114,7 @@ vgg_max = VGG19(include_top=False,  weights='imagenet', input_shape=IMAGE_SHAPE)
 vgg_max.trainable = False
 
 
-# In[11]:
+# In[2]:
 
 
 def replace_max_by_average_pooling(model):
@@ -131,7 +130,7 @@ def replace_max_by_average_pooling(model):
                 strides=layer.strides,
                 padding=layer.padding,
                 data_format=layer.data_format,
-                name=f"{layer.name}_av",
+                name=layer.name,
             )
         x = layer(x)
 
@@ -215,7 +214,9 @@ def compute_content_grads(model, init_noise, features):
 # In[19]:
 
 
-def train_content_features(block: tf.keras.models.Model, img: np.ndarray, iterations=500, opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
+def train_content_features(block: tf.keras.models.Model, 
+                           img: np.ndarray, iterations=500, 
+                           opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
 
     with tf.device("GPU:0"):
         features = block(img)
@@ -383,7 +384,9 @@ def compute_style_grads(models, init_noise, features_list):
 # In[29]:
 
 
-def train_style_features(blocks: tf.keras.models.Model, img: np.ndarray, iterations=500, opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
+def train_style_features(blocks: tf.keras.models.Model, 
+                         img: np.ndarray, iterations=500, 
+                         opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
 
     with tf.device("GPU:0"):
         features_list = []
