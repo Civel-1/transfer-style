@@ -3,7 +3,7 @@
 
 # # Feature Visualization based on VGG19 convolutionnal network
 
-# In[1]:
+# In[3]:
 
 
 from typing import List, Tuple
@@ -25,21 +25,21 @@ IMAGE_SHAPE = (512, 512, 3)
 
 # ## Import and resize input images
 
-# In[2]:
+# In[4]:
 
 
 raw_style = Image.open(f"{STYLE_PATH}/vangogh.png")
 raw_content = Image.open(f"{CONTENT_PATH}/ensc.png")
 
 
-# In[3]:
+# In[5]:
 
 
 content_img = raw_content.resize(IMAGE_SHAPE[0:2], Image.ANTIALIAS)
 style_img = raw_style.resize(IMAGE_SHAPE[0:2], Image.ANTIALIAS)
 
 
-# In[4]:
+# In[6]:
 
 
 fig = plt.figure(figsize=(15, 10))
@@ -59,35 +59,35 @@ plt.show(fig)
 # 
 # Images are preprocessed to respect the training input policy of VGG19.
 
-# In[5]:
+# In[7]:
 
 
 content_img = np.array(content_img)
 style_img = np.array(style_img)
 
 
-# In[6]:
+# In[8]:
 
 
 content_img = np.expand_dims(content_img, axis=0)
 style_img = np.expand_dims(style_img, axis=0)
 
 
-# In[7]:
+# In[9]:
 
 
 print(f"Content shape : {content_img.shape}")
 print(f"Style shape : {style_img.shape}")
 
 
-# In[8]:
+# In[10]:
 
 
 content_img = keras.applications.vgg19.preprocess_input(content_img, mode="tf")
 style_img = keras.applications.vgg19.preprocess_input(style_img, mode="tf")
 
 
-# In[9]:
+# In[11]:
 
 
 fig = plt.figure(figsize=(15, 10))
@@ -107,14 +107,14 @@ plt.show(fig)
 
 # ## Load model
 
-# In[10]:
+# In[12]:
 
 
 vgg_max = VGG19(include_top=False,  weights='imagenet', input_shape=IMAGE_SHAPE)
 vgg_max.trainable = False
 
 
-# In[2]:
+# In[13]:
 
 
 def replace_max_by_average_pooling(model):
@@ -137,14 +137,14 @@ def replace_max_by_average_pooling(model):
     return keras.models.Model(inputs=input_layer.input, outputs=x)
 
 
-# In[12]:
+# In[14]:
 
 
 vgg = replace_max_by_average_pooling(vgg_max)
 vgg.summary()
 
 
-# In[13]:
+# In[15]:
 
 
 def get_vgg_layer(model, layer_name: str, model_name: str=None) -> keras.models.Model:
@@ -153,7 +153,7 @@ def get_vgg_layer(model, layer_name: str, model_name: str=None) -> keras.models.
     return keras.models.Model(model.layers[0].input, output, name=model_name)
 
 
-# In[14]:
+# In[16]:
 
 
 block1 = get_vgg_layer(vgg, "block1_conv1", "block1")
@@ -165,7 +165,7 @@ block5 = get_vgg_layer(vgg, "block5_conv1", "block5")
 blocks = [block1, block2, block3, block4, block5]
 
 
-# In[15]:
+# In[17]:
 
 
 block3.summary()
@@ -184,14 +184,14 @@ block3.summary()
 # 
 # $\tilde{X} = \underset{X}{\mathrm{argmin}} ~~ L(M(X), M(C)) =  \underset{X}{\mathrm{argmin}} ~~ L(x_m, c_m)$
 
-# In[16]:
+# In[18]:
 
 
 def get_features_loss(noise_features, features_target):
     return tf.reduce_mean(tf.square(noise_features - features_target))
 
 
-# In[17]:
+# In[19]:
 
 
 def compute_content_loss(model, init_noise, features):
@@ -199,7 +199,7 @@ def compute_content_loss(model, init_noise, features):
     return get_features_loss(model_outputs, features) 
 
 
-# In[18]:
+# In[20]:
 
 
 def compute_content_grads(model, init_noise, features):
@@ -211,7 +211,7 @@ def compute_content_grads(model, init_noise, features):
 
 # ## Training function
 
-# In[19]:
+# In[21]:
 
 
 def train_content_features(block: tf.keras.models.Model, 
@@ -260,7 +260,7 @@ for block in blocks:
 # 
 # https://github.com/keras-team/keras-applications/blob/master/keras_applications/imagenet_utils.py
 
-# In[21]:
+# In[22]:
 
 
 def deprocess_image(x):
@@ -329,7 +329,7 @@ fig.savefig("../reports/content-features-visualization-forstyle.png")
 # We take as latent space for the style the local correlations existing in the features representations of a VGG layer.
 # These correlations are extracted by computing the Gram matrices $G^l$ 
 
-# In[24]:
+# In[23]:
 
 
 style_blocks = {
@@ -341,7 +341,7 @@ style_blocks = {
 }
 
 
-# In[25]:
+# In[24]:
 
 
 def gram_matrix(tensor):
@@ -351,7 +351,7 @@ def gram_matrix(tensor):
     return gram / tf.cast(filters, tf.float32)
 
 
-# In[26]:
+# In[25]:
 
 
 def get_style_loss(noise_features, target_features):
@@ -360,7 +360,7 @@ def get_style_loss(noise_features, target_features):
     return tf.reduce_sum(tf.square(noise_gram - target_gram)) / tf.cast(4, tf.float32)
 
 
-# In[27]:
+# In[26]:
 
 
 def compute_style_loss(models, init_noise, features_list):
@@ -371,7 +371,7 @@ def compute_style_loss(models, init_noise, features_list):
     return loss / len(models)
 
 
-# In[28]:
+# In[27]:
 
 
 def compute_style_grads(models, init_noise, features_list):
@@ -381,7 +381,7 @@ def compute_style_grads(models, init_noise, features_list):
     return tape.gradient(loss, init_noise), loss # dL(c, x)/dx
 
 
-# In[29]:
+# In[28]:
 
 
 def train_style_features(blocks: tf.keras.models.Model, 
@@ -480,4 +480,58 @@ for name, block in style_blocks.items():
 
 
 fig.savefig("../reports/style-features-visualization-forcontent.png")
+
+
+# # Feature visualization: training on content image
+
+# In[37]:
+
+
+def train_style_features_on_content(blocks: tf.keras.models.Model, 
+                                    img_style: np.ndarray,
+                                    img_content: np.ndarray,
+                                    iterations=500, 
+                                    opt=tf.keras.optimizers.Adam(5, decay=1e-3)) -> Tuple[List, np.ndarray]:
+    
+    img_cont = tf.Variable(img_content)
+    
+    with tf.device("CPU:0"):
+        features_list = []
+        for block in blocks:
+            features_list.append(block(img_style))
+        
+        min_vals = -1
+        max_vals = 1
+
+        history = []
+        built_imgs = []
+        best_loss = float("inf")
+        
+        for i in tqdm(range(iterations), f"Building img for {block.name}"):
+            grads, loss = compute_style_grads(blocks, img_cont, features_list) # grads is None for some reason, let's go back up a bit      
+            opt.apply_gradients([(grads, img_cont)]) # pb is here, arrive dès la première iter: peut-être qu'il peut pas calculer de gradients lorsque y'a qu'une seule valeur ?
+                                                        # Nope, ça arriverait pour les autres calculs aussi           
+            clipped = tf.clip_by_value(img_cont, min_vals, max_vals)
+            img_cont.assign(clipped) 
+            history.append(loss.numpy())
+
+            if loss < best_loss:
+                best_loss = loss
+                built_imgs.append(np.squeeze(img_cont.numpy().copy()))
+                
+    return history, built_imgs
+
+
+# In[38]:
+
+
+results = {}
+for name, block in style_blocks.items():
+    results[name] = train_style_features_on_content(block, style_img, content_img)
+
+
+# In[ ]:
+
+
+
 
