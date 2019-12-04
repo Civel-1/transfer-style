@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
+# In[2]:
 
 
-get_ipython().system('pip install src')
+get_ipython().system('pip install ..')
 
 
 # In[ ]:
