@@ -16,3 +16,16 @@ def get_style_loss(noise_features, target_features):
     noise_gram = gram_matrix(noise_features)
     target_gram = gram_matrix(target_features)
     return tf.reduce_sum(tf.square(noise_gram - target_gram)) / tf.cast(4, tf.float32)
+
+
+def compute_content_loss(model, init_noise, features):
+    model_outputs = model(init_noise)
+    return get_features_loss(model_outputs, features)
+
+
+def compute_style_loss(models, init_noise, features_list):
+    loss = 0.0
+    for features, model in zip(features_list, models):
+        model_outputs = model(init_noise)
+        loss+=get_style_loss(model_outputs, features)
+    return loss / len(models)

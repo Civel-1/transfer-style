@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="transferutils",
-    version="0.0.1",
+    version="0.0.2",
     author="Jules Civel, Louis Hache, Younès Rabii, Nathan Trouvain",
     author_email="civel-1@github.com",
     description="Utils for style transfer with TensorFlow",
