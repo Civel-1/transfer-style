@@ -7,7 +7,7 @@
 get_ipython().system('pip install --user -U ..')
 
 
-# In[2]:
+# In[1]:
 
 
 from typing import Sequence, Tuple
@@ -29,11 +29,21 @@ CONTENT_PATH = "../data/content"
 IMAGE_SHAPE = (512, 512, 3)
 
 
+# In[2]:
+
+
+style_img = tu.import_transform(f"{STYLE_PATH}/klimt.jpg")
+content_img = tu.import_transform(f"{CONTENT_PATH}/lilith.jpg")
+
+
 # In[3]:
 
 
-style_img = tu.import_transform(f"{STYLE_PATH}/vangogh.png")
-content_img = tu.import_transform(f"{CONTENT_PATH}/ensc.png")
+# Supprimer l'éventuel canal alpha
+if len(style_img.shape) > 3:
+    style_img = style_img[:,:,:,:3]
+if len(content_img.shape) > 3:
+    content_img = content_img[:,:,:,:3]
 
 
 # In[4]:
@@ -61,17 +71,17 @@ vgg = tu.replace_max_by_average_pooling(vgg_max)
 vgg.summary()
 
 
-# In[14]:
+# In[6]:
 
 
 content_blocks = [tu.get_vgg_layer(vgg, f"block{i}_conv1", f"block{i}") for i in range(1, 6)]
 style_blocks = [[content_blocks[j] for j in range(i)] for i in range(1, len(content_blocks) + 1)]
 
 
-# In[15]:
+# In[7]:
 
 
-def compute_loss(alpha: float,
+def compute_loss(alpha_ratio: float,
                  style_layers: Sequence[keras.models.Model],
                  content_layer: keras.models.Model,
                  init_noise: tf.Variable,
@@ -80,13 +90,15 @@ def compute_loss(alpha: float,
     
     style_score = tu.compute_style_loss(style_layers, init_noise, style_features)
     content_score = tu.compute_content_loss(content_layer, init_noise, content_features)
+    beta = 1.0
+    alpha = alpha_ratio * beta
     
-    loss = alpha * style_score + (1.0 - alpha) * content_score
+    loss = beta * style_score + alpha * content_score
     
     return loss, content_score, style_score
 
 
-# In[27]:
+# In[8]:
 
 
 def compute_grads(**kwargs):
@@ -96,7 +108,7 @@ def compute_grads(**kwargs):
         return tape.gradient(loss, kwargs.get("init_noise")), loss, content_score, style_score
 
 
-# In[78]:
+# In[11]:
 
 
 def train_style_transfer(style_blocks: Sequence[tf.keras.models.Model],
@@ -104,7 +116,7 @@ def train_style_transfer(style_blocks: Sequence[tf.keras.models.Model],
                          style_img: np.ndarray,
                          content_img: np.ndarray,
                          iterations=500,
-                         alpha=0.0001,
+                         alpha_ratio=1e4,
                          opt=tf.keras.optimizers.Adam(5, decay=1e-3)):
 
     with tf.device("GPU:0"):
@@ -114,10 +126,10 @@ def train_style_transfer(style_blocks: Sequence[tf.keras.models.Model],
             
         content_features = content_block(content_img)
         
-        init_noise = tf.Variable(tf.random.normal([1, *IMAGE_SHAPE])) #WARNING: toujours mettre les trucs utilisés par le
+        #init_noise = tf.Variable(tf.random.normal([1, *IMAGE_SHAPE])) #WARNING: toujours mettre les trucs utilisés par le
                                                                       #GradientTape en tf.Variable ("mutable tensor") sinon c'est 
                                                                       #la hez
-        #init_noise = tf.Variable(content_img)
+        init_noise = tf.Variable(content_img)
         
         min_vals = -1
         max_vals = 1
@@ -129,7 +141,7 @@ def train_style_transfer(style_blocks: Sequence[tf.keras.models.Model],
         best_loss = float("inf")
         
         for i in tqdm(range(iterations), f"Building img"):
-            grads, loss, content_score, style_score = compute_grads(alpha=alpha, 
+            grads, loss, content_score, style_score = compute_grads(alpha_ratio=alpha_ratio, 
                                                                     style_layers=style_blocks, 
                                                                     content_layer=content_block,
                                                                     init_noise=init_noise,
@@ -150,16 +162,16 @@ def train_style_transfer(style_blocks: Sequence[tf.keras.models.Model],
     return {"loss": loss_history, "style": style_history, "content": content_history}, built_imgs
 
 
-# In[79]:
+# In[18]:
 
 
-history, imgs = train_style_transfer(style_blocks[2], content_blocks[-1], style_img, content_img)
+history, imgs = train_style_transfer(style_blocks[2], content_blocks[-1], style_img, content_img, iterations=100, alpha_ratio=1e3)
 
 
-# In[82]:
+# In[19]:
 
 
-fig0 = plt.figure(figsize=(30, 30))
+fig0 = plt.figure(figsize=(15, 15))
 
 axes = fig0.add_subplot(1, 1, 1)
 axes.imshow(tu.deprocess_img(imgs[-1]))
@@ -183,11 +195,25 @@ axes4.set_title("Content loss over iterations")
 fig.show()
 
 
-# In[83]:
+# In[ ]:
 
 
-fig0.savefig("../reports/style_transfer.png")
-fig.savefig("../reports/style_transfer_metrics.png")
+fig0.savefig("../reports/style_transfer_lilith.png")
+fig.savefig("../reports/style_transfer_metrics_lilith.png")
+
+
+# In[31]:
+
+
+fig, axes = plt.subplots((len(imgs) // 2) // 5 + int((len(imgs) // 2) % 5 > 0), 5)
+for i in range(len(imgs) // 2):
+    axes[i % len(imgs) // 5 + int(len(imgs) % 5 > 0)][i % 5].imshow(imgs[2*i])
+
+
+# In[28]:
+
+
+axes.shape
 
 
 # In[ ]:
